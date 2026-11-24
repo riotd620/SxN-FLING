@@ -1,0 +1,721 @@
+--[[
+    🥶 SxN NITISH SUPER FLING ⚡ (V3 – compact UI)
+    - Original RX BAAP fling logic preserved
+    - All UI scaled down ~32% smaller
+    - Minimize only (no close button)
+    - Configurable power & duration
+    - Loop / Noclip / Anti-Fling
+    - Session-tagged (safe re-execution)
+    - Music: LOOPED 🔁 (rbxassetid://95131770144654)
+]]
+
+local Players            = game:GetService("Players")
+local RunService         = game:GetService("RunService")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local TextChatService    = game:GetService("TextChatService")
+local StarterGui         = game:GetService("StarterGui")
+local TweenService       = game:GetService("TweenService")
+local SoundService       = game:GetService("SoundService")
+
+local lp = Players.LocalPlayer
+local PlayerGui = lp:WaitForChild("PlayerGui")
+
+local spawn = spawn or function(f) coroutine.wrap(f)() end
+local wait  = wait  or function(t) local s=os.clock(); repeat until os.clock()-s>=(t or 0) end
+
+getgenv().SxN_NITISH_SESSION = (getgenv().SxN_NITISH_SESSION or 0) + 1
+local SESSION = getgenv().SxN_NITISH_SESSION
+
+local THEME = {
+    bg        = Color3.fromRGB(8, 6, 16),
+    panel     = Color3.fromRGB(18, 14, 32),
+    panelAlt  = Color3.fromRGB(26, 20, 46),
+    accent    = Color3.fromRGB(155, 77, 255),
+    accent2   = Color3.fromRGB(0, 229, 255),
+    danger    = Color3.fromRGB(255, 46, 151),
+    text      = Color3.fromRGB(240, 240, 255),
+    textDim   = Color3.fromRGB(140, 140, 170),
+}
+
+local function broadcast(msg)
+    print(msg)
+    spawn(function()
+        pcall(function()
+            if TextChatService and TextChatService:FindFirstChild("TextChannels")
+               and TextChatService.TextChannels:FindFirstChild("RBXGeneral") then
+                TextChatService.TextChannels.RBXGeneral:SendAsync(msg)
+            else
+                local dcs = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+                if dcs then
+                    local say = dcs:FindFirstChild("SayMessageRequest")
+                    if say then say:FireServer(msg, "All") end
+                end
+            end
+            StarterGui:SetCore("ChatMakeSystemMessage", {
+                Text = msg, Color = THEME.accent, Font = Enum.Font.GothamBold,
+            })
+        end)
+    end)
+end
+
+-- ============================================
+-- MUSIC – LOOPED 🔁
+-- ============================================
+pcall(function()
+    local oldMusic = SoundService:FindFirstChild("SxN_NITISH_MUSIC")
+    if oldMusic then oldMusic:Destroy() end
+
+    local music = Instance.new("Sound")
+    music.Name = "SxN_NITISH_MUSIC"
+    music.SoundId = "rbxassetid://95131770144654"
+    music.Volume = 0.5
+    music.Looped = true
+    music.Parent = SoundService
+    music:Play()
+end)
+
+broadcast("🥶 SxN NITISH SUPER FLING ACTIVATED ⚡")
+
+getgenv().SelectedTargets = getgenv().SelectedTargets or {}
+getgenv().LoopFling     = false
+getgenv().AntiFling     = false
+getgenv().Noclip        = false
+getgenv().FlingPower    = 1e9
+getgenv().FlingDuration = 2.0
+
+local isFlinging    = false
+local execLock      = false
+local currentFilter = ""
+local lastSafePos   = Vector3.new(0, 100, 0)
+local noclipConn    = nil
+local antiFlingConn = nil
+
+if lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+    lastSafePos = lp.Character.HumanoidRootPart.Position
+end
+
+-- ===== GUI =====
+local oldGui = PlayerGui:FindFirstChild("SxN_NITISH_FLINGER")
+if oldGui then oldGui:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "SxN_NITISH_FLINGER"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = PlayerGui
+
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.Size = UDim2.new(0, 420, 0, 320)
+Main.Position = UDim2.new(0.5, -210, 0.5, -160)
+Main.BackgroundColor3 = THEME.bg
+Main.BorderSizePixel = 0
+Main.Active = true
+Main.Draggable = true
+Main.ClipsDescendants = true
+Main.Parent = ScreenGui
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
+local mStroke = Instance.new("UIStroke", Main)
+mStroke.Color = THEME.accent
+mStroke.Thickness = 1.2
+mStroke.Transparency = 0.25
+
+local TopBar = Instance.new("Frame")
+TopBar.Size = UDim2.new(1, 0, 0, 36)
+TopBar.BackgroundColor3 = THEME.panel
+TopBar.BorderSizePixel = 0
+TopBar.Parent = Main
+
+local topGrad = Instance.new("UIGradient", TopBar)
+topGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, THEME.accent),
+    ColorSequenceKeypoint.new(1, THEME.accent2),
+})
+topGrad.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0.82),
+    NumberSequenceKeypoint.new(1, 0.82),
+})
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -50, 1, 0)
+Title.Position = UDim2.new(0, 12, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "🥶 SxN NITISH SUPER FLING ⚡"
+Title.TextColor3 = THEME.text
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 12
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = TopBar
+
+local MinBtn = Instance.new("TextButton")
+MinBtn.Size = UDim2.new(0, 22, 0, 22)
+MinBtn.Position = UDim2.new(1, -30, 0.5, -11)
+MinBtn.BackgroundColor3 = THEME.panelAlt
+MinBtn.BorderSizePixel = 0
+MinBtn.Text = "−"
+MinBtn.TextColor3 = THEME.text
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.TextSize = 16
+MinBtn.AutoButtonColor = false
+MinBtn.Parent = TopBar
+Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 5)
+
+local Content = Instance.new("Frame")
+Content.Size = UDim2.new(1, 0, 1, -36)
+Content.Position = UDim2.new(0, 0, 0, 36)
+Content.BackgroundTransparency = 1
+Content.Parent = Main
+
+-- Search
+local Search = Instance.new("TextBox")
+Search.Size = UDim2.new(1, -24, 0, 28)
+Search.Position = UDim2.new(0, 12, 0, 8)
+Search.BackgroundColor3 = THEME.panel
+Search.BorderSizePixel = 0
+Search.PlaceholderText = "🔍 Search players..."
+Search.Text = ""
+Search.TextColor3 = THEME.text
+Search.PlaceholderColor3 = THEME.textDim
+Search.Font = Enum.Font.Gotham
+Search.TextSize = 11
+Search.ClearTextOnFocus = false
+Search.Parent = Content
+Instance.new("UICorner", Search).CornerRadius = UDim.new(0, 7)
+local sp = Instance.new("UIPadding", Search)
+sp.PaddingLeft = UDim.new(0, 10)
+sp.PaddingRight = UDim.new(0, 10)
+
+-- List panel
+local ListFrame = Instance.new("Frame")
+ListFrame.Size = UDim2.new(0.5, -18, 0, 156)
+ListFrame.Position = UDim2.new(0, 12, 0, 44)
+ListFrame.BackgroundColor3 = THEME.panel
+ListFrame.BorderSizePixel = 0
+ListFrame.Parent = Content
+Instance.new("UICorner", ListFrame).CornerRadius = UDim.new(0, 7)
+
+local ListHeader = Instance.new("TextLabel")
+ListHeader.Size = UDim2.new(1, -20, 0, 16)
+ListHeader.Position = UDim2.new(0, 10, 0, 3)
+ListHeader.BackgroundTransparency = 1
+ListHeader.Text = "👥 PLAYERS"
+ListHeader.TextColor3 = THEME.accent2
+ListHeader.Font = Enum.Font.GothamBold
+ListHeader.TextSize = 9
+ListHeader.TextXAlignment = Enum.TextXAlignment.Left
+ListHeader.Parent = ListFrame
+
+local Scroll = Instance.new("ScrollingFrame")
+Scroll.Size = UDim2.new(1, -10, 1, -24)
+Scroll.Position = UDim2.new(0, 5, 0, 20)
+Scroll.BackgroundTransparency = 1
+Scroll.BorderSizePixel = 0
+Scroll.ScrollBarThickness = 3
+Scroll.ScrollBarImageColor3 = THEME.accent
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+Scroll.Parent = ListFrame
+
+-- Config panel
+local Config = Instance.new("Frame")
+Config.Size = UDim2.new(0.5, -18, 0, 156)
+Config.Position = UDim2.new(0.5, 6, 0, 44)
+Config.BackgroundColor3 = THEME.panel
+Config.BorderSizePixel = 0
+Config.Parent = Content
+Instance.new("UICorner", Config).CornerRadius = UDim.new(0, 7)
+
+local ConfigHeader = Instance.new("TextLabel")
+ConfigHeader.Size = UDim2.new(1, -20, 0, 16)
+ConfigHeader.Position = UDim2.new(0, 10, 0, 3)
+ConfigHeader.BackgroundTransparency = 1
+ConfigHeader.Text = "⚙️ CONFIG"
+ConfigHeader.TextColor3 = THEME.accent2
+ConfigHeader.Font = Enum.Font.GothamBold
+ConfigHeader.TextSize = 9
+ConfigHeader.TextXAlignment = Enum.TextXAlignment.Left
+ConfigHeader.Parent = Config
+
+-- Config rows
+local function createConfigRow(parent, y, label, placeholder, defaultVal, callback)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.42, 0, 0, 22)
+    lbl.Position = UDim2.new(0, 10, 0, y)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = THEME.textDim
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 9
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = parent
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0.53, -14, 0, 22)
+    box.Position = UDim2.new(0.43, 4, 0, y)
+    box.BackgroundColor3 = THEME.panelAlt
+    box.BorderSizePixel = 0
+    box.PlaceholderText = placeholder
+    box.Text = tostring(defaultVal)
+    box.TextColor3 = THEME.text
+    box.Font = Enum.Font.Gotham
+    box.TextSize = 9
+    box.ClearTextOnFocus = false
+    box.Parent = parent
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
+    local pad = Instance.new("UIPadding", box)
+    pad.PaddingLeft = UDim.new(0, 6)
+
+    box.FocusLost:Connect(function()
+        local n = tonumber(box.Text)
+        if n then callback(n)
+        else box.Text = tostring(defaultVal) end
+    end)
+    return box
+end
+
+createConfigRow(Config, 24, "Power", "1e9", getgenv().FlingPower, function(v)
+    getgenv().FlingPower = v
+end)
+
+createConfigRow(Config, 48, "Duration (s)", "2.0", getgenv().FlingDuration, function(v)
+    v = math.max(0.2, math.min(10, v))
+    getgenv().FlingDuration = v
+end)
+
+local function createToggle(parent, y, text, initial, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -20, 0, 22)
+    btn.Position = UDim2.new(0, 10, 0, y)
+    btn.BackgroundColor3 = initial and THEME.accent or THEME.panelAlt
+    btn.BorderSizePixel = 0
+    btn.Text = text .. ": " .. (initial and "ON" or "OFF")
+    btn.TextColor3 = THEME.text
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 9
+    btn.AutoButtonColor = false
+    btn.Parent = parent
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+
+    local state = initial
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        btn.Text = text .. ": " .. (state and "ON" or "OFF")
+        TweenService:Create(btn, TweenInfo.new(0.2), {
+            BackgroundColor3 = state and THEME.accent or THEME.panelAlt
+        }):Play()
+        callback(state)
+    end)
+    return btn
+end
+
+local updateNoclip, updateAntiFling
+
+createToggle(Config, 74,  "🔁 LOOP",       getgenv().LoopFling, function(v) getgenv().LoopFling = v end)
+createToggle(Config, 98,  "👻 NOCLIP",     getgenv().Noclip,    function(v) getgenv().Noclip = v; if updateNoclip then updateNoclip() end end)
+createToggle(Config, 122, "🛡️ ANTI-FLING", getgenv().AntiFling, function(v) getgenv().AntiFling = v; if updateAntiFling then updateAntiFling() end end)
+
+-- Launch
+local Launch = Instance.new("TextButton")
+Launch.Size = UDim2.new(1, -24, 0, 36)
+Launch.Position = UDim2.new(0, 12, 0, 206)
+Launch.BackgroundColor3 = THEME.accent
+Launch.BorderSizePixel = 0
+Launch.Text = "🚀 LAUNCH SUPER FLING 🚀"
+Launch.TextColor3 = THEME.text
+Launch.Font = Enum.Font.GothamBold
+Launch.TextSize = 13
+Launch.AutoButtonColor = false
+Launch.Parent = Content
+Instance.new("UICorner", Launch).CornerRadius = UDim.new(0, 8)
+local launchGrad = Instance.new("UIGradient", Launch)
+launchGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, THEME.accent),
+    ColorSequenceKeypoint.new(1, THEME.danger),
+})
+
+spawn(function()
+    while SESSION == getgenv().SxN_NITISH_SESSION and Launch.Parent do
+        TweenService:Create(Launch, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+            BackgroundColor3 = THEME.danger
+        }):Play()
+        wait(1.2)
+        if not Launch.Parent then break end
+        TweenService:Create(Launch, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+            BackgroundColor3 = THEME.accent
+        }):Play()
+        wait(1.2)
+    end
+end)
+
+-- Footer
+local Footer = Instance.new("Frame")
+Footer.Size = UDim2.new(1, 0, 0, 26)
+Footer.Position = UDim2.new(0, 0, 1, -26)
+Footer.BackgroundColor3 = THEME.panel
+Footer.BorderSizePixel = 0
+Footer.Parent = Main
+
+local FooterLeft = Instance.new("TextLabel")
+FooterLeft.Size = UDim2.new(0.5, -12, 1, 0)
+FooterLeft.Position = UDim2.new(0, 12, 0, 0)
+FooterLeft.BackgroundTransparency = 1
+FooterLeft.Text = "BY SxN NITISH ⚡"
+FooterLeft.TextColor3 = THEME.accent
+FooterLeft.Font = Enum.Font.GothamBold
+FooterLeft.TextSize = 9
+FooterLeft.TextXAlignment = Enum.TextXAlignment.Left
+FooterLeft.Parent = Footer
+
+local FooterRight = Instance.new("TextLabel")
+FooterRight.Size = UDim2.new(0.5, -12, 1, 0)
+FooterRight.Position = UDim2.new(0.5, 0, 0, 0)
+FooterRight.BackgroundTransparency = 1
+FooterRight.Text = "Selected: 0"
+FooterRight.TextColor3 = THEME.textDim
+FooterRight.Font = Enum.Font.Gotham
+FooterRight.TextSize = 9
+FooterRight.TextXAlignment = Enum.TextXAlignment.Right
+FooterRight.Parent = Footer
+
+-- ===== PLAYER LIST =====
+local function updatePlayerList(filter)
+    filter = (filter or ""):lower()
+
+    for name, p in pairs(getgenv().SelectedTargets) do
+        if not p or not p.Parent then getgenv().SelectedTargets[name] = nil end
+    end
+
+    for _, child in ipairs(Scroll:GetChildren()) do
+        if child:IsA("TextButton") then child:Destroy() end
+    end
+
+    local y, count = 0, 0
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= lp then
+            local n = p.Name:lower()
+            local d = p.DisplayName:lower()
+            if filter == "" or n:find(filter, 1, true) or d:find(filter, 1, true) then
+                local isSel = getgenv().SelectedTargets[p.Name] ~= nil
+                if isSel then count = count + 1 end
+
+                local btn = Instance.new("TextButton")
+                btn.Size = UDim2.new(1, -6, 0, 22)
+                btn.Position = UDim2.new(0, 3, 0, y)
+                btn.BackgroundColor3 = isSel and THEME.accent or THEME.panelAlt
+                btn.BorderSizePixel = 0
+                btn.Text = "  " .. p.DisplayName .. " (@" .. p.Name .. ")"
+                btn.TextColor3 = THEME.text
+                btn.Font = Enum.Font.Gotham
+                btn.TextSize = 10
+                btn.TextXAlignment = Enum.TextXAlignment.Left
+                btn.AutoButtonColor = false
+                btn.Parent = Scroll
+                Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+
+                btn.MouseButton1Click:Connect(function()
+                    if getgenv().SelectedTargets[p.Name] then
+                        getgenv().SelectedTargets[p.Name] = nil
+                    else
+                        getgenv().SelectedTargets[p.Name] = p
+                    end
+                    updatePlayerList(currentFilter)
+                end)
+
+                y = y + 25
+            end
+        end
+    end
+
+    Scroll.CanvasSize = UDim2.new(0, 0, 0, y + 4)
+    FooterRight.Text = "Selected: " .. count
+end
+
+updatePlayerList("")
+
+Search:GetPropertyChangedSignal("Text"):Connect(function()
+    currentFilter = Search.Text
+    updatePlayerList(currentFilter)
+end)
+
+Players.PlayerAdded:Connect(function() updatePlayerList(currentFilter) end)
+Players.PlayerRemoving:Connect(function(p)
+    getgenv().SelectedTargets[p.Name] = nil
+    updatePlayerList(currentFilter)
+end)
+
+-- ===== HELPERS =====
+local function setCollision(char, state)
+    if not char then return end
+    pcall(function()
+        for _, v in ipairs(char:GetDescendants()) do
+            if v:IsA("BasePart") then
+                v.CanCollide = state
+                v.CanTouch = state
+            end
+        end
+    end)
+end
+
+local function clearBodyMovers(character)
+    if not character then return end
+    for _, v in ipairs(character:GetDescendants()) do
+        if v:IsA("BodyMover") or v:IsA("BodyVelocity") or v:IsA("BodyPosition")
+           or v:IsA("BodyGyro") or v:IsA("BodyAngularVelocity") or v:IsA("BodyThrust")
+           or v:IsA("LinearVelocity") or v:IsA("AngularVelocity") or v:IsA("VectorForce") then
+            v:Destroy()
+        end
+    end
+end
+
+-- ===== FLING (original RX BAAP logic) =====
+local function flingPlayer(targetPlayer)
+    if not targetPlayer or targetPlayer == lp or not targetPlayer.Parent then return end
+    if not targetPlayer.Character or isFlinging then return end
+
+    local tChar = targetPlayer.Character
+    local tRoot = tChar:FindFirstChild("HumanoidRootPart")
+    local tHum  = tChar:FindFirstChildOfClass("Humanoid")
+    local myChar = lp.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if not tRoot or not myRoot or not myHum then return end
+
+    isFlinging = true
+    local originalLocation = myRoot.CFrame
+    local power    = getgenv().FlingPower or 1e9
+    local duration = getgenv().FlingDuration or 2.0
+
+    clearBodyMovers(tChar)
+    if tHum then
+        tHum.PlatformStand = true
+        tHum.Sit = false
+        pcall(function() tHum:ChangeState(Enum.HumanoidStateType.Physics) end)
+    end
+    tRoot.Anchored = false
+
+    local bv_t = Instance.new("BodyVelocity", tRoot)
+    bv_t.MaxForce = Vector3.new(power, power, power)
+    bv_t.Velocity = Vector3.new(0, power, 0)
+    bv_t.P = power
+
+    local bav_t = Instance.new("BodyAngularVelocity", tRoot)
+    bav_t.MaxTorque = Vector3.new(power, power, power)
+    bav_t.AngularVelocity = Vector3.new(power, power, power)
+    bav_t.P = power
+
+    local attach_t = Instance.new("Attachment", tRoot)
+    local lv_t = Instance.new("LinearVelocity", tRoot)
+    lv_t.MaxForce = power
+    lv_t.Attachment0 = attach_t
+    lv_t.VectorVelocity = Vector3.new(0, power, 0)
+
+    local attach_t2 = Instance.new("Attachment", tRoot)
+    local vf_t = Instance.new("VectorForce", tRoot)
+    vf_t.Force = Vector3.new(power, power, power)
+    vf_t.Attachment0 = attach_t2
+
+    setCollision(myChar, true)
+
+    local bv_s = Instance.new("BodyVelocity", myRoot)
+    bv_s.MaxForce = Vector3.new(power, power, power)
+    bv_s.Velocity = Vector3.new(0, power, 0)
+    bv_s.P = power
+
+    local bav_s = Instance.new("BodyAngularVelocity", myRoot)
+    bav_s.MaxTorque = Vector3.new(power, power, power)
+    bav_s.AngularVelocity = Vector3.new(power, power, power)
+    bav_s.P = power
+
+    local attach_s = Instance.new("Attachment", myRoot)
+    local lv_s = Instance.new("LinearVelocity", myRoot)
+    lv_s.MaxForce = power
+    lv_s.Attachment0 = attach_s
+    lv_s.VectorVelocity = Vector3.new(0, power, 0)
+
+    local startTime = tick()
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        pcall(function()
+            if not tRoot or not tRoot.Parent or not myRoot or not myRoot.Parent
+               or tick() - startTime > duration
+               or SESSION ~= getgenv().SxN_NITISH_SESSION then
+                if conn then conn:Disconnect() end
+                return
+            end
+            local a = tick() * 45
+            local offset = Vector3.new(math.sin(a) * 0.3, -0.2 + math.sin(a * 1.3) * 0.4, math.cos(a) * 0.3)
+            myRoot.CFrame = CFrame.new(tRoot.Position + offset) * CFrame.Angles(
+                math.rad(tick() * 9000), math.rad(tick() * 9000), math.rad(tick() * 9000)
+            )
+            bv_t.Velocity = Vector3.new(0, power, 0)
+            bav_t.AngularVelocity = Vector3.new(power, power, power)
+            lv_t.VectorVelocity = Vector3.new(0, power, 0)
+            vf_t.Force = Vector3.new(power, power, power)
+            bv_s.Velocity = Vector3.new(0, power, 0)
+            bav_s.AngularVelocity = Vector3.new(power, power, power)
+            lv_s.VectorVelocity = Vector3.new(0, power, 0)
+        end)
+    end)
+
+    repeat wait() until not conn.Connected
+
+    pcall(function()
+        bv_t:Destroy() bav_t:Destroy() lv_t:Destroy() attach_t:Destroy()
+        vf_t:Destroy() attach_t2:Destroy()
+        bv_s:Destroy() bav_s:Destroy() lv_s:Destroy() attach_s:Destroy()
+        if tHum then
+            tHum.PlatformStand = false
+            pcall(function() tHum:ChangeState(Enum.HumanoidStateType.Falling) end)
+        end
+        if myRoot and myRoot.Parent then
+            myRoot.AssemblyLinearVelocity = Vector3.zero
+            myRoot.AssemblyAngularVelocity = Vector3.zero
+            myRoot.CFrame = originalLocation
+        end
+        if myHum then pcall(function() myHum:ChangeState(Enum.HumanoidStateType.GettingUp) end) end
+        setCollision(myChar, not getgenv().Noclip)
+    end)
+
+    isFlinging = false
+end
+
+-- ===== TOGGLES =====
+updateNoclip = function()
+    if getgenv().Noclip then
+        if not noclipConn then
+            noclipConn = RunService.Stepped:Connect(function()
+                if lp.Character then setCollision(lp.Character, false) end
+            end)
+        end
+    else
+        if noclipConn then
+            noclipConn:Disconnect()
+            noclipConn = nil
+            if lp.Character then setCollision(lp.Character, true) end
+        end
+    end
+end
+
+updateAntiFling = function()
+    if getgenv().AntiFling then
+        if not antiFlingConn then
+            antiFlingConn = RunService.Heartbeat:Connect(function()
+                if isFlinging then return end
+                pcall(function()
+                    local hrp = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+                    if not hrp then return end
+                    local hum = lp.Character:FindFirstChildOfClass("Humanoid")
+                    if hrp.AssemblyLinearVelocity.Magnitude > 400
+                       or hrp.AssemblyAngularVelocity.Magnitude > 400 then
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+                        hrp.CFrame = CFrame.new(lastSafePos)
+                    elseif hrp.AssemblyLinearVelocity.Magnitude < 20 and hum then
+                        local st = hum:GetState()
+                        if st == Enum.HumanoidStateType.Running
+                           or st == Enum.HumanoidStateType.Landed
+                           or st == Enum.HumanoidStateType.RunningNoPhysics then
+                            lastSafePos = hrp.Position
+                        end
+                    end
+                end)
+            end)
+        end
+    else
+        if antiFlingConn then
+            antiFlingConn:Disconnect()
+            antiFlingConn = nil
+        end
+    end
+end
+
+-- ===== LOOP =====
+spawn(function()
+    while SESSION == getgenv().SxN_NITISH_SESSION do
+        wait(0.5)
+        if getgenv().LoopFling then
+            local targets = {}
+            for _, p in pairs(getgenv().SelectedTargets) do
+                if p and p.Parent and p.Character then
+                    table.insert(targets, p)
+                end
+            end
+            for _, t in ipairs(targets) do
+                if not getgenv().LoopFling or SESSION ~= getgenv().SxN_NITISH_SESSION then break end
+                flingPlayer(t)
+                wait(0.2)
+            end
+        end
+    end
+end)
+
+-- ===== LAUNCH =====
+Launch.MouseButton1Click:Connect(function()
+    if execLock or isFlinging then return end
+    execLock = true
+
+    local targets = {}
+    for _, p in pairs(getgenv().SelectedTargets) do
+        if p and p.Parent and p.Character then table.insert(targets, p) end
+    end
+
+    if #targets == 0 then
+        local q = Search.Text
+        if q ~= "" then
+            q = q:lower()
+            for _, p in pairs(Players:GetPlayers()) do
+                if p ~= lp then
+                    local n, d = p.Name:lower(), p.DisplayName:lower()
+                    if n == q or d == q or n:find(q, 1, true) or d:find(q, 1, true) then
+                        table.insert(targets, p)
+                        getgenv().SelectedTargets[p.Name] = p
+                        updatePlayerList(currentFilter)
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    if #targets == 0 then
+        Launch.Text = "❌ No target selected!"
+        wait(0.8)
+        Launch.Text = "🚀 LAUNCH SUPER FLING 🚀"
+        execLock = false
+        return
+    end
+
+    -- 👇 NEW: broadcast when a valid fling is executed
+    broadcast("SUPER FLING EXECUTED ⚡🥶")
+
+    Launch.Text = "⚡ FLINGING " .. #targets .. " TARGET(S)..."
+    for _, t in ipairs(targets) do
+        if SESSION ~= getgenv().SxN_NITISH_SESSION then break end
+        flingPlayer(t)
+        wait(0.2)
+    end
+    Launch.Text = "🚀 LAUNCH SUPER FLING 🚀"
+    execLock = false
+end)
+
+-- ===== MINIMIZE ONLY =====
+local minimized = false
+local fullSize  = UDim2.new(0, 420, 0, 320)
+local minSize   = UDim2.new(0, 420, 0, 36)
+
+MinBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    TweenService:Create(Main, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {
+        Size = minimized and minSize or fullSize
+    }):Play()
+    if minimized then
+        Content.Visible = false
+        Footer.Visible = false
+        MinBtn.Text = "+"
+    else
+        Content.Visible = true
+        Footer.Visible = true
+        MinBtn.Text = "−"
+    end
+end)
+
+print("✅ 🥶 SxN NITISH SUPER FLING ⚡ V3 loaded – compact UI, minimize only, music LOOPED!")
